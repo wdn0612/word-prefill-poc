@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Word Document Processor</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="file"], input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #replacementFields {
+            margin-bottom: 20px;
+        }
+        .replacement-pair {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .removal-btn {
+            background-color: #ff4444;
+            padding: 8px 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Word Document Processor</h1>
+    <form id="documentForm" action="/process" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="file">Select Word Document (.docx):</label>
+            <input type="file" id="file" name="file" accept=".docx" required>
+        </div>
+
+        <div class="form-group">
+            <label for="additionalRows">Additional Rows:</label>
+            <input type="number" id="additionalRows" name="additionalRows" value="0" min="0">
+        </div>
+
+        <div class="form-group">
+            <label>Replacements:</label>
+            <div id="replacementFields">
+                <div class="replacement-pair">
+                    <input type="text" name="placeholder" placeholder="Placeholder text">
+                    <input type="text" name="value" placeholder="Replacement value">
+                    <button type="button" class="removal-btn" onclick="removeReplacementPair(this)">X</button>
+                </div>
+            </div>
+            <button type="button" onclick="addReplacementPair()">Add Another Replacement</button>
+        </div>
+
+        <button type="submit">Process Document</button>
+    </form>
+
+    <script>
+        function addReplacementPair() {
+            const container = document.getElementById('replacementFields');
+            const newPair = document.createElement('div');
+            newPair.className = 'replacement-pair';
+            newPair.innerHTML = `
+                <input type="text" name="placeholder" placeholder="Placeholder text">
+                <input type="text" name="value" placeholder="Replacement value">
+                <button type="button" class="removal-btn" onclick="removeReplacementPair(this)">X</button>
+            `;
+            container.appendChild(newPair);
+        }
+
+        function removeReplacementPair(button) {
+            button.parentElement.remove();
+        }
+
+        document.getElementById('documentForm').onsubmit = function(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            
+            // Add file
+            formData.append('file', document.getElementById('file').files[0]);
+            
+            // Add additional rows
+            formData.append('additionalRows', document.getElementById('additionalRows').value);
+            
+            // Add replacements
+            const pairs = document.getElementsByClassName('replacement-pair');
+            for (let pair of pairs) {
+                const placeholder = pair.querySelector('input[name="placeholder"]').value;
+                const value = pair.querySelector('input[name="value"]').value;
+                if (placeholder && value) {
+                    formData.append(placeholder, value);
+                }
+            }
+
+            fetch('/process', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.blob())
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'processed_document.docx';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while processing the document.');
+            });
+        };
+    </script>
+</body>
+</html>
