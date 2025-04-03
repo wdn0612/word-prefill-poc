@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,7 +29,14 @@ public class WordDocumentService {
             
             // Process tables
             for (XWPFTable table : doc.getTables()) {
-                processTable(table, replacements, additionalRows);
+                // Check if this is the "Related Party" table
+                if (isRelatedPartyTable(table)) {
+                    // Only add additional rows to Related Party tables
+                    processRelatedPartyTable(table, replacements, additionalRows);
+                } else {
+                    // Don't add additional rows to other tables
+                    processTable(table, replacements, 0);
+                }
             }
 
             // Process paragraphs outside tables
@@ -108,8 +116,106 @@ public class WordDocumentService {
         }
     }
 
+    private boolean isRelatedPartyTable(XWPFTable table) {
+        // Check if this table has text that identifies it as the "Related Party" table
+        for (XWPFTableRow row : table.getRows()) {
+            for (XWPFTableCell cell : row.getTableCells()) {
+                for (XWPFParagraph paragraph : cell.getParagraphs()) {
+                    String text = paragraph.getText();
+                    if (text != null && text.contains("Related Party")) {
+                        logger.debug("Found Related Party table");
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void processRelatedPartyTable(XWPFTable mainTable, Map<String, String> replacements, int additionalRows) {
+        logger.debug("Processing Related Party table with {} rows", mainTable.getRows().size());
+        
+        // First process the main table with replacements
+        for (XWPFTableRow row : mainTable.getRows()) {
+            for (XWPFTableCell cell : row.getTableCells()) {
+                replaceInCell(cell, replacements);
+                
+                // Look for nested tables
+                List<XWPFTable> nestedTables = cell.getTables();
+                if (!nestedTables.isEmpty()) {
+                    // Process each nested table
+                    for (XWPFTable nestedTable : nestedTables) {
+                        processNestedRelatedPartyTable(nestedTable, replacements, additionalRows);
+                    }
+                }
+            }
+        }
+    }
+    
+    private void processNestedRelatedPartyTable(XWPFTable nestedTable, Map<String, String> replacements, int additionalRows) {
+        logger.debug("Processing nested table in Related Party section with {} rows", nestedTable.getRows().size());
+        
+        // Process existing rows with replacements
+        for (XWPFTableRow row : nestedTable.getRows()) {
+            for (XWPFTableCell cell : row.getTableCells()) {
+                replaceInCell(cell, replacements);
+            }
+        }
+        
+        // Add additional rows with related party information if needed
+        if (additionalRows > 0 && nestedTable.getNumberOfRows() >= 2) {
+            // Use the 2nd row as template (index 1)
+            XWPFTableRow templateRow = nestedTable.getRows().get(1);
+            
+            // Create a map with the specific values for related party
+            Map<String, String> relatedPartyValues = new HashMap<>();
+            relatedPartyValues.put("{relatedPartyName}", "ABC");
+            relatedPartyValues.put("{relatedPartyContactNumber}", "123");
+            relatedPartyValues.put("{relatedPartyShareHolding}", "20%");
+            
+            // First, add all the new rows
+            for (int i = 0; i < additionalRows; i++) {
+                XWPFTableRow newRow = nestedTable.createRow();
+                copyRowSettings(templateRow, newRow);
+                
+                // Copy content from template cells to new row cells
+                for (int j = 0; j < newRow.getTableCells().size(); j++) {
+                    XWPFTableCell cell = newRow.getCell(j);
+                    XWPFTableCell templateCell = templateRow.getCell(j);
+                    
+                    // Copy paragraphs from template cell to new cell
+                    for (int k = 0; k < templateCell.getParagraphs().size(); k++) {
+                        XWPFParagraph templateParagraph = templateCell.getParagraphs().get(k);
+                        XWPFParagraph newParagraph;
+                        
+                        if (k < cell.getParagraphs().size()) {
+                            newParagraph = cell.getParagraphs().get(k);
+                        } else {
+                            newParagraph = cell.addParagraph();
+                        }
+                        
+                        // Copy paragraph content and style
+                        copyParagraphContent(templateParagraph, newParagraph);
+                    }
+                }
+            }
+            
+            // Then, replace values starting from row 2 (index 1) to the end
+            for (int rowIndex = 1; rowIndex < nestedTable.getNumberOfRows(); rowIndex++) {
+                XWPFTableRow row = nestedTable.getRow(rowIndex);
+                
+                // Replace values in each cell
+                for (XWPFTableCell cell : row.getTableCells()) {
+                    for (XWPFParagraph paragraph : cell.getParagraphs()) {
+                        replaceInParagraph(paragraph, relatedPartyValues);
+                    }
+                }
+            }
+        }
+    }
+
     private void processTable(XWPFTable table, Map<String, String> replacements, int additionalRows) {
-        logger.debug("Processing table with {} rows", table.getRows().size());
+        logger.debug("Processing regular table with {} rows", table.getRows().size());
         // Process existing rows
         for (XWPFTableRow row : table.getRows()) {
             for (XWPFTableCell cell : row.getTableCells()) {
@@ -126,22 +232,28 @@ public class WordDocumentService {
             }
         }
     }
-
-    private void copyRowSettings(XWPFTableRow sourceRow, XWPFTableRow targetRow) {
+    
+    /**
+     * Copies row settings from source row to target row
+     * 
+     * @param source The source row to copy from
+     * @param target The target row to copy to
+     */
+    private void copyRowSettings(XWPFTableRow source, XWPFTableRow target) {
         logger.debug("Copying row settings from template row");
         
         // Copy row properties
-        if (sourceRow.getCtRow().getTrPr() != null) {
-            targetRow.getCtRow().setTrPr(sourceRow.getCtRow().getTrPr());
+        if (source.getCtRow().getTrPr() != null) {
+            target.getCtRow().setTrPr(source.getCtRow().getTrPr());
         }
 
         // Copy cell properties and content
-        for (int i = 0; i < sourceRow.getTableCells().size(); i++) {
-            XWPFTableCell sourceCell = sourceRow.getCell(i);
-            XWPFTableCell targetCell = targetRow.getCell(i);
+        for (int i = 0; i < source.getTableCells().size(); i++) {
+            XWPFTableCell sourceCell = source.getCell(i);
+            XWPFTableCell targetCell = target.getCell(i);
             
             if (targetCell == null) {
-                targetCell = targetRow.createCell();
+                targetCell = target.createCell();
             }
 
             // Copy cell properties
@@ -156,6 +268,44 @@ public class WordDocumentService {
                 if (sourcePara.getCTP().getPPr() != null) {
                     targetPara.getCTP().setPPr(sourcePara.getCTP().getPPr());
                 }
+            }
+        }
+    }
+    
+    /**
+     * Copies content and formatting from source paragraph to target paragraph
+     * 
+     * @param source The source paragraph to copy from
+     * @param target The target paragraph to copy to
+     */
+    private void copyParagraphContent(XWPFParagraph source, XWPFParagraph target) {
+        // Copy alignment and spacing
+        if (source.getAlignment() != null) {
+            target.setAlignment(source.getAlignment());
+        }
+        
+        // Copy the text and runs
+        for (XWPFRun sourceRun : source.getRuns()) {
+            XWPFRun targetRun = target.createRun();
+            
+            // Copy text
+            if (sourceRun.getText(0) != null) {
+                targetRun.setText(sourceRun.getText(0));
+            }
+            
+            // Copy formatting
+            targetRun.setBold(sourceRun.isBold());
+            targetRun.setItalic(sourceRun.isItalic());
+            targetRun.setUnderline(sourceRun.getUnderline());
+            // Use getFontSize() with caution as it's deprecated
+            if (sourceRun.getFontSize() != -1) {
+                targetRun.setFontSize(sourceRun.getFontSize());
+            }
+            if (sourceRun.getFontFamily() != null) {
+                targetRun.setFontFamily(sourceRun.getFontFamily());
+            }
+            if (sourceRun.getColor() != null) {
+                targetRun.setColor(sourceRun.getColor());
             }
         }
     }
